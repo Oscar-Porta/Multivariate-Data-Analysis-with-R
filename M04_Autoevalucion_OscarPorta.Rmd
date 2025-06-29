@@ -1,0 +1,727 @@
+---
+title: |
+ <b><div style="text-align: center"> Autoevaluación Módulo 4 </div></b>
+author:  
+ name: Óscar Porta
+date: Mayo 2025
+output: 
+  rmdformats::readthedown:
+    code_folding: hide
+css: customOPS_med.css
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  fig.align = 'center',
+  fig.width = 12,  # Esto actúa como un valor base
+  fig.height = 5,  # También un valor base
+  out.width = '100%',  # Asegura que el ancho se ajuste
+  out.height = '80%'   # Ajusta el alto al 80%
+)
+```
+
+# 1.Análisis discriminante
+
+Se dispone información acerca de 16 clientes a los que se les concedió un préstamo instantáneo por un importe de 12.000 euros cada uno. Una vez pasados tres años desde la concesión de los préstamos había 8 clientes, de ese grupo de 16, que fueron clasificados como fallidos, mientras que los otros 8 clientes son cumplidores, ya que reintegraron el préstamo. Para cada uno de los clientes se dispone de información sobre su patrimonio neto y deudas pendientes correspondientes al momento de la solicitud. Con la información sobre las variabes de patrimonio neto y deudas pendientes se desea construir una función discriminante que clasifique con los menores errores posibles a los clientes en dos grupos: fallidos y no fallidos.
+
+**Librerías utilizadas y justificación**
+
+* MASS: contiene la función lda() que utilizaremos para construir la función discriminante lineal y clasificar las observaciones.
+
+* ggplot2: permite visualizar la distribución de las variables y crear gráficos bivariantes que nos ayudarán a explorar la separación entre grupos.
+
+* dplyr: facilita la manipulación de los datos, filtrado, mutación y agrupaciones de forma clara y estructurada.
+
+* tibble: permite trabajar con data frames de forma más moderna y legible, especialmente útil para mantener estructuras limpias.
+
+* ggpubr: mejora la presentación visual de los gráficos generados con ggplot2, facilitando su combinación y anotación.
+
+* klar: ofrece funciones gráficas como partimat() para representar las fronteras de decisión generadas por modelos discriminantes.
+
+* caret: proporciona herramientas para evaluar el rendimiento del modelo, generar matrices de confusión y aplicar validación cruzada.
+```{r installPackages, message=FALSE, warning=FALSE, include=FALSE}
+if (!require("ggpubr")) install.packages("ggpubr")
+if (!require("klaR")) install.packages("klaR")
+```
+
+
+```{r Librerias, message=FALSE, warning=FALSE, include=FALSE}
+# Cargamos todas las librerías necesarias
+library(MASS)     # Para Análisis Discriminante Lineal (lda)
+library(ggplot2)  # Para visualización gráfica
+library(dplyr)    # Para manipulación eficiente de datos
+library(tibble)   # Para construir tibbles de forma legible
+library(ggpubr)   # Para mejorar la presentación de los gráficos
+library(klaR)     # Para representar gráficamente la frontera de decisión
+library(caret)    # Para evaluación del modelo (confusión, métricas)
+
+```
+
+```{r Datos, message=FALSE, warning=FALSE}
+
+# Creamos los vectores con los datos proporcionados
+Patrimonio <- c(1.3, 3.7, 5, 5.9, 7.1, 4, 7.9, 5.1, 5.2, 9.8, 9, 12, 6.3, 8.7, 11.1, 9.9)
+Deuda      <- c(4.1, 6.9, 3, 6.5, 5.4, 2.7, 7.6, 3.8, 1, 4.2, 4.8, 2, 5.2, 1.1, 4.1, 1.6)
+Grupo      <- c(1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0)
+
+# Creamos el tibble y convertimos Grupo a factor
+datos <- tibble(Patrimonio, Deuda, Grupo = as.factor(Grupo))
+
+# Creamos los dos nuevos clientes a clasificar
+nuevos <- tibble(
+  Patrimonio = c(10.1, 9.7),
+  Deuda = c(6.8, 2.2),
+  Grupo = factor(c(NA, NA), levels = c("0", "1"))
+)
+```
+<br>
+Antes de aplicar el modelo de análisis discriminante lineal, realizamos una exploración gráfica de las variables. Representamos las distribuciones de patrimonio neto y deuda por separado, diferenciando los grupos de clientes cumplidores y fallidos. Esto nos permite analizar visualmente si las variables presentan patrones diferenciados que justifiquen la clasificación supervisada mediante LDA.
+<br>
+
+```{r GraficosDensidad, message=FALSE, warning=FALSE}
+# Gráfico de densidad para Patrimonio
+ggplot(datos, aes(x = Patrimonio, fill = Grupo)) +
+  geom_density(alpha = 0.5) +
+  labs(title = "Distribución de Patrimonio por Grupo",
+       x = "Patrimonio Neto", y = "Densidad") +
+  scale_fill_manual(values = c("#00AFBB", "#E7B800"),
+                    labels = c("Cumplidores", "Fallidos")) +
+  theme_minimal()
+
+# Gráfico de densidad para Deuda
+ggplot(datos, aes(x = Deuda, fill = Grupo)) +
+  geom_density(alpha = 0.5) +
+  labs(title = "Distribución de Deuda por Grupo",
+       x = "Deuda Pendiente", y = "Densidad") +
+  scale_fill_manual(values = c("#00AFBB", "#E7B800"),
+                    labels = c("Cumplidores", "Fallidos")) +
+  theme_minimal()
+```
+
+<br>
+A continuación, representamos gráficamente las variables patrimonio neto y deuda de forma conjunta, diferenciando los grupos de clientes cumplidores y fallidos. Esta visualización nos permite observar la disposición relativa de los grupos en el plano bidimensional y valorar si existe una separación suficiente para que un modelo lineal pueda discriminar entre ellos.
+
+```{r GraficoBivariante, message=FALSE, warning=FALSE}
+# Calculamos los centroides por grupo
+centroides <- datos %>%
+  group_by(Grupo) %>%
+  summarise(Patrimonio = mean(Patrimonio), Deuda = mean(Deuda))
+
+# Gráfico bivariante
+ggplot(datos, aes(x = Patrimonio, y = Deuda, color = Grupo)) +
+  geom_point(size = 3, alpha = 0.8) +
+  geom_point(data = centroides, aes(x = Patrimonio, y = Deuda),
+             color = "black", size = 4, shape = 4, stroke = 2) +
+  labs(title = "Distribución bivariante: Patrimonio vs. Deuda",
+       x = "Patrimonio Neto", y = "Deuda Pendiente") +
+  scale_color_manual(values = c("#00AFBB", "#E7B800"),
+                     labels = c("Cumplidores", "Fallidos")) +
+  theme_minimal()
+```
+Tras representar las distribuciones de patrimonio y deuda por grupo, observamos que la variable patrimonio presenta una buena capacidad discriminante: los clientes fallidos tienden a concentrarse en valores más bajos de patrimonio, mientras que los cumplidores muestran una clara concentración en niveles más altos. En cuanto a la deuda pendiente, las distribuciones presentan mayor solapamiento, aunque también se aprecia una ligera tendencia a que los cumplidores tengan menores niveles de deuda.
+
+El gráfico bivariante refuerza esta percepción: ambos grupos se distribuyen de forma relativamente diferenciada en el plano Patrimonio-Deuda, y los centroides aparecen claramente separados. Esta estructura sugiere que un modelo lineal de clasificación como el Análisis Discriminante Lineal (LDA) puede resultar adecuado, ya que parece existir una frontera aproximadamente lineal entre los grupos y no se observan grandes diferencias en la dispersión interna.
+
+<br>
+
+A continuación, aplicamos el modelo de análisis discriminante lineal (LDA) con el objetivo de obtener la función discriminante que mejor separe los grupos de clientes fallidos y cumplidores. A partir del modelo estimado, calculamos las medias de los valores proyectados en la dimensión discriminante para cada grupo (\bar{z}_0 y \bar{z}_1) y determinamos el punto de corte óptimo. Este umbral nos permitirá clasificar nuevas observaciones según su distancia relativa a cada grupo.
+
+```{r ModeloLDA, message=FALSE, warning=FALSE}
+# Aplicamos el modelo LDA
+modelo_lda <- lda(Grupo ~ Patrimonio + Deuda, data = datos)
+
+# Mostramos el modelo para ver los coeficientes de la función discriminante
+modelo_lda
+
+# Obtenemos las puntuaciones discriminantes (valores proyectados en el eje LDA)
+predicciones_entrenamiento <- predict(modelo_lda)
+
+# Extraemos las puntuaciones discriminantes (LD1) para cada observación
+z <- predicciones_entrenamiento$x[,1]
+
+# Calculamos las medias discriminantes por grupo
+z_barra <- tapply(z, datos$Grupo, mean)
+z_barra
+
+# Calculamos el punto de corte como la media de los dos centroides
+punto_corte <- mean(z_barra)
+punto_corte
+```
+Tras ajustar el modelo de análisis discriminante lineal (LDA) sobre los datos disponibles, obtenemos la siguiente función discriminante:
+
+
+Z = -0.4225 · Patrimonio + 0.3802 · Deuda
+
+
+Esta función proyecta las observaciones sobre una dimensión lineal que maximiza la separación entre los grupos de clientes cumplidores y fallidos. En este eje, hemos calculado los valores medios para cada grupo, obteniendo:
+
+* 	\bar{z}_0 = -1.2252 para el grupo 0 (cumplidores),
+
+* \bar{z}_1 =  1.2252 para el grupo 1 (fallidos).
+
+
+El punto de corte óptimo se determina como la media de ambos centroides proyectados, resultando en un valor de 0. Este umbral será el que utilicemos para clasificar nuevas observaciones: aquellas con Z > 0 serán clasificadas como fallidas, y aquellas con Z < 0 como cumplidoras.
+
+<br>
+
+Antes de aplicar el modelo a nuevos solicitantes, evaluamos su capacidad de clasificación sobre la muestra original. Para ello, comparamos las predicciones obtenidas mediante la función discriminante con las clases reales y calculamos la tasa de acierto (eficiencia del modelo). Este indicador nos permite valorar si el modelo ha aprendido correctamente la separación entre grupos.
+
+```{r EficienciaModelo, message=FALSE, warning=FALSE}
+# Creamos una tabla de contingencia entre predicción y clase real
+tabla_confusion <- table(Predicho = predicciones_entrenamiento$class,
+                         Real = datos$Grupo)
+
+# Calculamos la eficiencia: aciertos / total
+eficiencia <- sum(diag(tabla_confusion)) / sum(tabla_confusion)
+eficiencia
+```
+<br>
+
+Para finalizar el análisis, representamos gráficamente la frontera de decisión generada por el modelo LDA mediante la función partimat() del paquete klaR. Esta herramienta permite visualizar de forma intuitiva cómo se separan los grupos en el espacio de las variables explicativas, y comprobar si la regla de decisión generada se ajusta adecuadamente a la estructura observada en los datos.
+
+```{r FronteraDecision, message=FALSE, warning=FALSE}
+# Representamos la frontera de decisión
+partimat(Grupo ~ Patrimonio + Deuda,
+         data = datos,
+         method = "lda",
+         col.mean = c("blue", "orange"),
+         col.correct = "gray80",
+         col.wrong = "red",
+         imageplot = FALSE)
+```
+<br>
+
+Una vez formulada la función discriminante, estamos en disposición de aplicarla a nuevas observaciones. En este caso, el director de la entidad financiera nos proporciona dos nuevas solicitudes de préstamo, para las que se dispone de los valores de patrimonio neto y deuda pendiente en el momento de la solicitud. Utilizaremos la función discriminante obtenida para proyectar a cada uno de estos clientes y determinar si deberían ser clasificados como cumplidores o fallidos, basándonos en su posición relativa al punto de corte.
+
+```{r ClasificacionNuevosClientes, message=FALSE, warning=FALSE}
+# Aplicamos el modelo LDA a los nuevos clientes
+predicciones_nuevos <- predict(modelo_lda, newdata = nuevos)
+
+# Mostramos las puntuaciones proyectadas y la clase predicha
+predicciones_nuevos$x            # Valores de Z (proyección sobre LD1)
+predicciones_nuevos$class        # Clasificación final según punto de corte
+
+# Creamos un resumen conjunto
+resultado_nuevos <- nuevos %>%
+  select(Patrimonio, Deuda) %>%
+  mutate(Z = predicciones_nuevos$x[,1],
+         Clasificacion = predicciones_nuevos$class)
+
+resultado_nuevos
+```
+
+
+Aplicamos la función discriminante obtenida a los dos nuevos solicitantes de préstamo. El primer cliente presenta un patrimonio de 10,1 y una deuda de 6,8, obteniendo una puntuación discriminante de Z = -0.2451. El segundo cliente tiene un patrimonio de 9,7 y una deuda de 2,2, con una puntuación de Z = -1.8251.
+
+Ambos valores se encuentran por debajo del punto de corte establecido (0), por lo que ambos solicitantes han sido clasificados como cumplidores según el modelo. En consecuencia, la entidad financiera podría considerar conceder el préstamo a ambos perfiles, al presentar características similares a los clientes que anteriormente reintegraron el préstamo con éxito.
+
+# 2.Análisis factorial
+
+Comenzamos el análisis factorial cargando las librerías necesarias y leyendo el fichero Excel que contiene los datos de la encuesta de atención hospitalaria. Nos centramos en las variables P1 a P7, que son las que se analizarán a lo largo del ejercicio. Estas variables representan ítems relacionados con la percepción del usuario sobre el servicio recibido y serán la base del análisis factorial.
+
+```{r CargaLibreriasFactorial, message=FALSE, warning=FALSE, include=FALSE}
+# Instalar solo si es necesario
+if (!require("readxl")) install.packages("readxl")
+if (!require("psych")) install.packages("psych")
+if (!require("GPArotation")) install.packages("GPArotation")
+if (!require("dplyr")) install.packages("dplyr")
+
+# Cargar librerías
+library(readxl)        # Para leer archivos Excel
+library(psych)         # Para análisis factorial y KMO
+library(GPArotation)   # Para rotaciones de factores (Varimax, Oblimin...)
+library(dplyr)         # Para manipulación de datos
+
+```
+
+
+```{r CargaDatosFactorial, message=FALSE, warning=FALSE}
+
+# Leemos el fichero Excel y seleccionamos solo las variables P1 a P7
+datos <- read_excel("datos_atencion hospitalaria.xlsx")
+datos_factorial <- datos %>%
+  select(P1, P2, P3, P4, P5, P6, P7)
+# Previsualización de las primeras filas del dataset
+head(datos_factorial)
+
+# Estadísticos descriptivos básicos
+describe(datos_factorial)
+# Matriz de correlaciones
+correl <- cor(datos_factorial, use = "pairwise.complete.obs")
+correl
+
+# Visualización gráfica
+if (!require("corrplot")) install.packages("corrplot")
+library(corrplot)
+corrplot(correl, type = "lower", method = "circle", tl.col = "black")
+```
+
+<br>
+## Hacer un Análisis factorial con las variables P1, P2, P3, P4, P5, P6 y P7.
+
+Antes de aplicar el análisis factorial, evaluamos si los datos cumplen las condiciones necesarias para su aplicación. Para ello, analizamos la matriz de correlaciones entre las variables, calculamos el índice KMO para valorar la adecuación de la muestra y aplicamos el test de esfericidad de Bartlett para comprobar si existen correlaciones significativas entre las variables. Si ambos indicadores son satisfactorios, podremos justificar la aplicación del análisis factorial.
+
+```{r PreanalisisFactorial, message=FALSE, warning=FALSE}
+# Matriz de correlaciones
+correlaciones <- cor(datos_factorial, use = "pairwise.complete.obs")
+correlaciones
+
+# Índice de adecuación de la muestra (KMO)
+kmo_resultado <- KMO(datos_factorial)
+kmo_resultado
+
+# Test de esfericidad de Bartlett
+bartlett_resultado <- cortest.bartlett(correlaciones, n = nrow(datos_factorial))
+bartlett_resultado
+```
+<br>
+
+Tras analizar la matriz de correlaciones entre las variables, observamos la existencia de relaciones moderadas y fuertes entre ciertos pares de ítems, como ocurre entre P3, P4 y P5, o entre P6 y P7, lo que sugiere la presencia de estructuras latentes comunes.
+
+Sin embargo, el índice de adecuación muestral KMO presenta un valor global de 0.58, lo que indica que la muestra no es óptima para realizar un análisis factorial. Además, algunos ítems como P1, P2, P6 y P7 muestran índices individuales muy bajos (inferiores a 0.50), lo que sugiere que podrían no compartir suficiente varianza con el resto.
+
+Por otro lado, el test de esfericidad de Bartlett arroja un valor de p < 0.001, indicando que la matriz de correlaciones no es una matriz identidad, por lo que existe correlación significativa entre las variables y, en principio, es factible aplicar un análisis factorial.
+
+En conclusión, a pesar de que el índice KMO indica ciertas limitaciones en la adecuación de los datos, la existencia de correlaciones relevantes y la significación del test de Bartlett justifican la aplicación del análisis factorial, aunque los resultados deberán interpretarse con cautela.
+
+<br>
+
+Procedemos a realizar el análisis factorial sobre las 7 variables seleccionadas. En primer lugar, determinamos el número óptimo de factores a extraer mediante el criterio de Kaiser, el gráfico de sedimentación (Scree plot) y el análisis paralelo. A continuación, aplicamos el análisis factorial con rotación Varimax, que nos permitirá interpretar mejor los factores obtenidos.
+
+
+
+```{r DeterminarFactores, message=FALSE, warning=FALSE}
+# Análisis paralelo para decidir número de factores
+fa.parallel(datos_factorial, fa = "fa", fm = "ml", n.iter = 100,
+            show.legend = TRUE, main = "Análisis paralelo y Scree plot")
+```
+<br>
+
+Para determinar el número óptimo de factores, hemos aplicado el análisis paralelo con 100 iteraciones, comparando los autovalores reales con los generados aleatoriamente. Observamos que los tres primeros factores presentan autovalores superiores a los simulados, por lo que decidimos extraer tres factores. A continuación, aplicamos el análisis factorial con método de máxima verosimilitud y rotación Varimax para facilitar la interpretación.
+
+```{r AnalisisFactorial_3factores, message=FALSE, warning=FALSE}
+
+# Análisis factorial con extracción de 3 factores, método ML + rotación Varimax
+modelo_3f <- fa(datos_factorial, nfactors = 3, rotate = "varimax", fm = "ml")
+
+# Matriz de cargas factoriales con corte en 0.3
+print(modelo_3f$loadings, cutoff = 0.3)
+
+# Comunalidades
+round(modelo_3f$communality, 3)
+
+# Especificidades
+round(1 - modelo_3f$communality, 3)
+
+# Varianza explicada
+modelo_3f$Vaccounted
+```
+
+<br> 
+
+** Varianza explicada:**
+
+* Cada factor explica aproximadamente un 25–39% de la varianza.
+
+* El modelo en conjunto explica el 89.1% de la varianza total → es un resultado excelente para un análisis factorial con 3 factores.
+
+
+Tras aplicar el análisis factorial con tres factores, observamos una estructura muy clara en la que cada variable presenta una carga elevada sobre un único factor, sin solapamientos. Las comunalidades son en todos los casos superiores al umbral recomendado de 0.30, indicando que los factores explican adecuadamente la varianza de cada variable. Además, el modelo explica un 89.1% de la varianza total, lo que refuerza su solidez. En consecuencia, no se considera necesario eliminar ninguna variable.
+
+## Presente en una tabla la comunalidad y especificidad de cada variable.
+
+```{r TablaComunalidadEspecificidad, message=FALSE, warning=FALSE}
+# Comunalidades (h2) y especificidades (u2) a partir del modelo ML
+comunalidades <- round(modelo_3f$communality, 3)
+especificidades <- round(1 - comunalidades, 3)
+
+# Creamos tabla unificada
+tabla_comunalidad <- data.frame(
+  Variable = names(comunalidades),
+  Comunalidad = comunalidades,
+  Especificidad = especificidades
+)
+
+# Mostramos la tabla
+tabla_comunalidad
+```
+
+<br>
+
+En la siguiente tabla se recogen las comunalidades y especificidades de cada una de las variables utilizadas en el análisis factorial. La comunalidad (h²) representa la proporción de varianza de cada variable explicada por los tres factores extraídos, mientras que la especificidad (u²) indica la parte de la varianza no explicada por el modelo. Todas las variables presentan comunalidades elevadas, lo que confirma su buena adecuación al modelo factorial estimado mediante el método de máxima verosimilitud.
+
+
+##  Realice una interpretación de factores con los que está trabajado. He indique que porcentaje de la varianza total explican.
+
+```{r DiagramaFactoresML, message=FALSE, warning=FALSE}
+# Diagrama de factores basado en tu modelo ml
+fa.diagram(modelo_3f)
+```
+<br>
+
+Aplicando el análisis factorial mediante el método de máxima verosimilitud (ML) con rotación Varimax, obtenemos una solución de tres factores con una estructura clara y consistente. A continuación, interpretamos cada uno de ellos según el contenido de los ítems que los definen y las cargas factoriales observadas:
+
+* Factor 1 (ML1): Atención técnica cualificada
+
+Este factor agrupa con cargas muy elevadas a los ítems P6 (atención del personal médico) y P7 (información recibida), lo que indica que representa la calidad de la atención técnica proporcionada por personal especializado. Explica un 24.9% de la varianza.
+
+* Factor 2 (ML2): Servicios generales del hospital
+
+Este factor está compuesto por P1 (estado de las habitaciones) y P2 (comida), ambos con cargas superiores a 0.91. Se interpreta como una dimensión relacionada con la percepción de los servicios no sanitarios ofrecidos por el hospital. Explica un 25.0% de la varianza.
+
+* Factor 3 (ML3): Atención del personal no médico
+
+Este factor agrupa los ítems P3 (atención del personal no sanitario), P4 (personal auxiliar) y P5 (enfermería), todos ellos con cargas superiores a 0.92. Refleja la calidad de la atención del personal no médico en la experiencia del paciente. Explica un 39.2% de la varianza.
+
+La varianza total explicada por el modelo es del 89.1%, lo que confirma la solidez y coherencia de la estructura factorial obtenida. La distribución de las variables entre los tres factores concuerda con la lógica teórica del contenido de la encuesta.
+
+
+## Realice un b_plot con cada uno de los factores seleccionados, y comente los resultados.
+
+A continuación representamos gráficamente las cargas factoriales de las variables sobre los factores extraídos, utilizando un biplot. Este gráfico permite observar visualmente la relación entre los ítems y los factores, así como la agrupación de las variables en torno a cada dimensión latente.
+
+```{r BiplotCompleto_ML, message=FALSE, warning=FALSE}
+# Biplot
+biplot(modelo_3f)
+```
+El gráfico biplot nos permite observar visualmente las puntuaciones de los individuos en los tres factores extraídos, junto con la representación de las variables en forma de vectores. Este panel permite analizar simultáneamente la distribución de las puntuaciones factoriales y la proyección de las variables sobre cada eje factorial.
+
+Se observa que:
+
+* El primer factor (ML1) está fuertemente definido por las variables P6 y P7, correspondientes a la atención médica e información recibida.
+
+* El segundo factor (ML2) agrupa a las variables P1 y P2, relacionadas con los servicios generales del hospital (habitaciones y comida).
+
+* El tercer factor (ML3) está dominado por las variables P3, P4 y P5, que recogen la percepción sobre el personal no médico.
+
+Esta representación gráfica refuerza la interpretación conceptual que habíamos extraído anteriormente a partir de las cargas factoriales.
+
+## Obtenga las puntuaciones de los nuevos factores, obtenga una única puntuación, realice con el resultado un análisis estadístico descriptivo, y un histograma. Comente el resultado,
+
+Una vez extraídos e interpretados los factores, calculamos las puntuaciones factoriales individuales para cada observación. Estas puntuaciones reflejan el grado en que cada sujeto se posiciona en cada uno de los factores extraídos. Posteriormente, agregamos las puntuaciones en una única medida global para obtener una representación general del nivel percibido por los encuestados. Finalmente, analizamos estadísticamente esta puntuación agregada y representamos su distribución mediante un histograma.
+
+```{r AnalisisPuntuacionesFactoriales, message=FALSE, warning=FALSE}
+# Extraemos las puntuaciones de los factores
+scores <- modelo_3f$scores
+
+# Mostramos primeras y últimas observaciones
+head(scores)
+tail(scores)
+
+# Estadísticos descriptivos
+summary(scores)
+
+# Correlaciones entre factores
+library(corrplot)
+corrplot(cor(scores), type = "lower", method = "circle", tl.col = "black")
+
+# Histogramas individuales
+hist(scores[,1], main = "Histograma ML1", xlab = "Puntuación", col = "red")
+hist(scores[,2], main = "Histograma ML2", xlab = "Puntuación", col = "blue")
+hist(scores[,3], main = "Histograma ML3", xlab = "Puntuación", col = "green")
+
+# Puntuación ponderada por R² (Multiple R2)
+# La matriz R2.scores representa la bondad de ajuste de cada factor
+ponderacion <- as.matrix(scores) %*% as.matrix(modelo_3f$R2.scores)
+colnames(ponderacion) <- "IndiceGlobal"
+
+# Resumen y distribución de la puntuación compuesta
+summary(ponderacion)
+hist(ponderacion, main = "Histograma Índice Global", xlab = "Puntuación ponderada", col = "darkgreen")
+```
+
+
+Tras extraer tres factores mediante análisis factorial con máxima verosimilitud, hemos calculado las puntuaciones individuales de cada encuestado en cada dimensión latente. Los factores extraídos muestran independencia entre sí y representan de forma clara tres áreas diferenciadas: atención técnica cualificada (ML1), servicios generales del hospital (ML2) y atención del personal no médico (ML3).
+
+El análisis estadístico de las puntuaciones revela que las valoraciones se distribuyen de manera simétrica en las tres dimensiones, aunque la atención del personal no médico presenta mayor dispersión, lo que podría señalar una experiencia menos uniforme en esta área.
+
+Finalmente, mediante una puntuación compuesta ponderada por el R² de cada factor, hemos obtenido un índice global que permite sintetizar la valoración general de cada encuestado. Esta métrica, centrada en cero y con buena dispersión, resulta útil para clasificar, comparar o segmentar a los usuarios en futuros análisis.
+
+
+# 3.Escalamiento Multidimensional
+
+
+En este ejercicio vamos a aplicar técnicas de escalamiento multidimensional no métrico con el objetivo de analizar la similitud en la evolución de las tasas de paro registradas en la provincia de Cantabria desde 2005 hasta el primer trimestre de 2020. 
+
+El análisis nos permitirá representar gráficamente la proximidad entre las series temporales, facilitando la interpretación de patrones comunes. 
+
+Finalmente, aplicaremos técnicas de clustering para agrupar aquellas series que compartan comportamientos similares a lo largo del tiempo.
+
+```{r CargaLibreriasEscalamiento, message=FALSE, warning=FALSE, include=FALSE}
+
+# Instalación de paquetes solo si es necesario
+if (!require("proxy")) install.packages("proxy")
+if (!require("smacof")) install.packages("smacof")
+if (!require("factoextra")) install.packages("factoextra")
+if (!require("dtw")) install.packages("dtw")
+if (!require("tidyr")) install.packages("tidyr")
+if (!require("tidyverse")) install.packages("tidyverse")
+if (!require("data.table")) install.packages("data.table")
+
+
+# Carga de librerías
+library(proxy)        # Para cálculo de matrices de distancia personalizadas
+library(smacof)       # Para realizar escalamiento multidimensional no métrico
+library(factoextra)   # Visualización de resultados de clustering
+library(dtw)          # Dynamic Time Warping (para distancias entre series temporales)
+library(tidyr)   # Para usar pivot_longer()
+library(tidyverse)   # Incluye dplyr, ggplot2, tidyr
+library(data.table)  # Para as.data.table si se quiere usar
+
+```
+
+Cargamos el fichero Excel con los datos de paro para la provincia de Cantabria. Inspeccionamos su estructura para identificar las columnas que contienen las tasas de paro y determinar si es necesario transformar el formato para aplicar el escalamiento multidimensional.
+
+```{r CargaDatosParo, message=FALSE, warning=FALSE}
+# Cargar el archivo Excel
+ruta_archivo <- "datos_socioecconomica.xlsx"
+datos_paro <- read_excel('/Users/oscar/Desktop/BIG DATA/2o TRIMESTRE/MODULO 4_Análisis de datos multivariantes 2/3_Autoevaluación/M04_Autoevalucion_OscarPorta/datos_socioeconomica.xlsx')
+
+# Ver estructura y primeras filas
+str(datos_paro)
+head(datos_paro)
+
+```
+
+Seleccionamos las columnas del dataset que contienen las tasas de paro para los diferentes grupos de edad y sexo. A continuación, calculamos la similitud entre las series temporales mediante la distancia Dynamic Time Warping (DTW), que permite comparar secuencias temporales que puedan estar desfasadas en el tiempo. Finalmente, visualizamos la matriz de distancias mediante un mapa de calor con dendrograma, que permite identificar visualmente los grupos de series más similares.
+
+
+```{r DTWHeatmap, message=FALSE, warning=FALSE}
+# Seleccionamos únicamente las columnas con tasas de paro
+datos_eval <- datos_paro[ , 3:(ncol(datos_paro) - 2)]
+
+# Calculamos la matriz de distancias DTW entre columnas (series temporales)
+# NOTA: by_rows = FALSE indica que la comparación se hace por columnas (series)
+distMatrix <- proxy::dist(datos_eval, method = "DTW", by_rows = FALSE)
+
+# Representamos la matriz de distancias como un mapa de calor con dendrograma
+heatmap(as.matrix(distMatrix), margins = c(10, 10), main = "Mapa de Calor: Similitud entre series de paro (DTW)")
+```
+
+En el siguiente mapa de calor representamos la matriz de distancias DTW entre las distintas series de paro. Las celdas más claras indican mayor similitud entre la evolución temporal de las tasas de paro para los diferentes grupos, mientras que las oscuras representan trayectorias más divergentes. A través del dendrograma se identifican grupos coherentes, como los relacionados con los jóvenes (16–24 años), que muestran un comportamiento diferenciado respecto al resto de la población. Esta visualización resulta útil para explorar posibles patrones de agrupación de comportamiento a lo largo del tiempo.
+
+
+Una vez obtenida la matriz de distancias entre las series temporales de paro mediante DTW, aplicamos un escalamiento multidimensional no métrico (NMDS) con el objetivo de representar estas distancias en un espacio bidimensional. Esta técnica permite conservar la estructura ordinal de las similitudes y visualizarla gráficamente. Evaluamos el ajuste del modelo a través del índice de stress, que indica el grado de distorsión entre las distancias originales y las proyectadas.
+
+```{r NMDS_SMACOF, message=FALSE, warning=FALSE}
+# Aplicamos el escalamiento multidimensional no métrico (NMDS)
+socioeconomica_smacof <- mds(distMatrix, type = "ordinal")
+
+# Mostramos el stress del modelo (debería ser bajo si el ajuste es bueno)
+paste("Stress(%) = ", round(socioeconomica_smacof$stress * 100, 3))
+
+# Gráfico de configuración
+plot(socioeconomica_smacof, plot.type = "confplot", main = "Configuración NMDS - Series de Paro")
+```
+
+Con el fin de evaluar la calidad del ajuste del modelo NMDS, representamos dos gráficos: el stress plot y el gráfico de Shepard. Ambos permiten comprobar la fidelidad con la que las distancias originales han sido representadas en el espacio bidimensional. A continuación, aplicamos técnicas de agrupamiento (clustering) sobre las coordenadas obtenidas, utilizando un algoritmo jerárquico. Para determinar el número óptimo de grupos, analizamos la evolución del error intragrupo en un modelo k-means.
+
+```{r Stress_Shepard_Clustering, message=FALSE, warning=FALSE}
+# Gráfico de stress: representación del ajuste del modelo
+plot(socioeconomica_smacof, plot.type = "stressplot", main = "Stress Plot")
+
+# Shepard diagram: comparación entre distancias originales y representadas
+plot(socioeconomica_smacof, plot.type = "Shepard", main = "Shepard Diagram")
+
+# Creamos matriz de distancias entre los puntos de la configuración (coordenadas NMDS)
+d <- dist(socioeconomica_smacof$conf)^2
+
+# Selección del número óptimo de clústers (codo del error intragrupo)
+set.seed(123)
+Errores <- NULL
+K_Max <- 10
+
+for (i in 1:K_Max) {
+  Errores[i] <- sum(kmeans(d[-1], centers = i)$withinss)
+}
+
+# Visualización del "codo"
+err_df <- data.frame(
+  num_cl = 1:K_Max,
+  sum_err = Errores
+)
+
+library(ggplot2)
+ggplot(err_df, aes(x = as.factor(num_cl), y = sum_err)) +
+  geom_line(group = 1) +
+  geom_point() +
+  labs(
+    title = "GRÁFICO SELECCIÓN NÚMERO DE CLÚSTERS",
+    x = "Número de clústers",
+    y = "Suma del Error"
+  ) +
+  theme_bw()
+```
+```{r ClusteringJerarquico, message=FALSE, warning=FALSE}
+# Agrupamiento jerárquico con enlace promedio
+hc <- hclust(d, method = "average")
+
+# Representamos el dendrograma
+plot(hc, main = "Dendrograma - Clustering jerárquico sobre configuración NMDS")
+```
+
+<br>
+
+El análisis del gráfico de codo sugiere que la partición óptima es de dos clústers, lo cual resulta coherente con la representación NMDS previa. Para realizar el agrupamiento final, optamos por un método jerárquico con enlace promedio, adecuado en este caso ya que estamos agrupando variables (series) y no observaciones. El dendrograma resultante confirma la existencia de dos grupos diferenciados de evolución en las tasas de paro, en línea con la diferenciación observada previamente entre jóvenes y población adulta.
+
+
+Una vez identificado que existen dos grandes agrupaciones en la evolución de las tasas de paro, representamos gráficamente las series temporales que pertenecen a cada uno de estos grupos. En el primer grupo se encuentran las tasas correspondientes a la población joven, caracterizadas por una mayor variabilidad y valores más elevados. En el segundo grupo agrupamos el resto de tasas, asociadas a una evolución más estable y menos extrema.
+
+
+```{r VisualizacionClusters, message=FALSE, warning=FALSE}
+# Series correspondientes a población joven
+young_cols <- c("Total.Jovenes", "Mujeres.16-24", "Hombres.16-24", "Total.16-24")
+
+young_data <- datos_eval %>%
+  select(all_of(young_cols))
+
+young_data$idx <- 1:nrow(young_data)
+
+youngdat <- young_data %>%
+  pivot_longer(cols = -idx) %>%
+  ggplot(aes(x = idx, y = value, group = name)) +
+  geom_line(col = "green4") +
+  facet_wrap(~ name, ncol = 2) +
+  labs(
+    title = "Tasa de Paro - Jóvenes",
+    x = "Periodo",
+    y = "Tasa de Paro"
+  ) +
+  theme_bw()
+
+print(youngdat)
+
+# Series correspondientes al resto de variables
+resto_cols <- setdiff(names(datos_eval), young_cols)
+
+resto_data <- datos_eval %>%
+  select(all_of(resto_cols))
+
+resto_data$idx <- 1:nrow(resto_data)
+
+restodat <- resto_data %>%
+  pivot_longer(cols = -idx) %>%
+  ggplot(aes(x = idx, y = value, group = name)) +
+  geom_line(col = "green4") +
+  facet_wrap(~ name, ncol = 2) +
+  labs(
+    title = "Tasa de Paro - Resto Tasas",
+    x = "Periodo",
+    y = "Tasa de Paro"
+  ) +
+  theme_bw()
+
+print(restodat)
+```
+<br>
+
+Como paso final, representamos gráficamente las series temporales agrupadas por los clústers obtenidos en el modelo NMDS. 
+
+
+* En el primer grupo se encuentran las tasas de paro correspondientes a la población joven, que presentan niveles de paro significativamente más elevados y una mayor volatilidad a lo largo del tiempo. 
+
+* En cambio, el segundo grupo, que agrupa al resto de categorías poblacionales, muestra una evolución más moderada y estable en las tasas de desempleo. 
+
+*Esta clasificación permite identificar dinámicas diferenciadas en el mercado laboral y puede ser útil para diseñar políticas específicas según el segmento poblacional afectado.*
+
+
+# 4. Correlación canónica
+
+
+En este ejercicio vamos a aplicar un análisis de correlación canónica sobre el conjunto de datos Cars93, disponible en la librería MASS. 
+
+Nuestro objetivo es estudiar las relaciones entre dos grupos de variables: 
+
+* por un lado, las características físicas de los automóviles (como el tamaño del motor, la longitud o el peso)
+
+* por otro, variables relacionadas con el precio y el rendimiento (precio medio, consumo en ciudad y carretera, y radio de giro). 
+
+El análisis nos permitirá identificar combinaciones lineales de variables que están altamente correlacionadas entre ambos grupos.
+
+```{r CargaLibreriasCCA, message=FALSE, warning=FALSE, include=FALSE}
+# Instalar solo si es necesario
+if (!require("MASS")) install.packages("MASS")
+if (!require("CCA")) install.packages("CCA")
+if (!require("corrplot")) install.packages("corrplot")
+
+# Cargar librerías necesarias
+library(MASS)       # Para acceder al dataset Cars93
+library(CCA)        # Para análisis de correlación canónica
+library(corrplot)   # Para representar matrices de correlación
+```
+
+
+Comenzamos seleccionando los dos conjuntos de variables que van a formar parte del análisis. Por un lado, incluimos las variables relacionadas con el precio y el rendimiento del vehículo (grupo X): precio medio, consumo en ciudad, consumo en carretera y radio de giro. Por otro lado, seleccionamos las características físicas del vehículo (grupo Y): tamaño del motor, caballos de fuerza, longitud, distancia entre ejes, anchura, espacio del asiento trasero y peso. A continuación, visualizamos la matriz de correlación entre ambos bloques de variables para estudiar el patrón de relaciones antes de aplicar el análisis canónico.
+
+```{r MatrizCorrelaciones, message=FALSE, warning=FALSE}
+# Seleccionamos los datos
+datos4 <- Cars93
+
+# Definimos las matrices de variables
+X <- as.matrix(datos4[, c("Price", "MPG.city", "MPG.highway", "Turn.circle")])
+Y <- as.matrix(datos4[, c("EngineSize", "Horsepower", "Length", "Wheelbase", "Width", "Rear.seat.room", "Weight")])
+
+# Calculamos la matriz de correlaciones cruzadas
+correl <- matcor(X, Y)
+
+# Mostramos la matriz
+correl
+```
+
+<br>
+
+Hemos calculado las matrices de correlación entre las variables del conjunto X (relacionadas con el precio y el funcionamiento del vehículo) y las del conjunto Y (asociadas a sus características físicas).
+
+En la matriz de correlaciones internas de X ($Xcor), observamos que las variables de consumo en ciudad y carretera (MPG.city y MPG.highway) están fuertemente correlacionadas positivamente entre sí y negativamente con el precio y el radio de giro. Esto indica que los coches más caros y menos maniobrables tienden a consumir más combustible (es decir, tienen menor eficiencia).
+
+En la matriz interna de Y ($Ycor), las variables físicas como longitud, peso, tamaño del motor y distancia entre ejes muestran correlaciones altas entre sí, lo que sugiere que los vehículos más grandes también tienden a ser más pesados y potentes.
+
+La matriz de correlación cruzada ($XYcor) muestra cómo se relacionan las variables de X con las de Y. Observamos que el precio y el radio de giro están positivamente correlacionados con casi todas las variables físicas, mientras que el consumo (MPG) está negativamente correlacionado. Esto confirma que los coches más grandes, pesados y potentes tienden a ser más caros, menos maniobrables y menos eficientes.
+
+
+A continuación, representamos gráficamente las correlaciones entre los dos grupos de variables mediante una matriz cruzada, lo que nos permite observar las asociaciones individuales entre cada par de variables. Luego aplicamos el análisis de correlación canónica (CCA), con el que obtenemos combinaciones lineales óptimas de variables en X e Y que maximizan su correlación mutua.
+
+
+```{r CorrelacionCanonica1, message=FALSE, warning=FALSE}
+# Representamos la matriz de correlaciones cruzadas con colores
+img.matcor(correl, type = 2)
+
+# Ejecutamos el análisis de correlación canónica
+res.cc <- cc(X, Y)
+
+# Mostramos los resultados
+res.cc
+```
+
+```{r GraficosCCAFinal, message=FALSE, warning=FALSE}
+# Gráfico de barras con las correlaciones canónicas
+corr_df <- data.frame(
+  num_dim = 1:length(res.cc$cor),
+  corr_val = res.cc$cor
+)
+
+ggplot(corr_df, aes(x = as.factor(num_dim), y = corr_val)) +
+  geom_col(fill = "green4") +
+  geom_text(aes(label = round(corr_val, 2)), vjust = -0.3, color = "red") +
+  labs(
+    title = "GRÁFICO SELECCIÓN NÚMERO DE DIMENSIONES",
+    x = "Dimensión",
+    y = "Correlación Canónica"
+  ) +
+  theme_bw()
+
+# Gráfico de variables en el plano canónico (dimensiones 1 y 2)
+plt.cc(res.cc, d1 = 1, d2 = 2, var.label = TRUE)
+```
+<br>
+
+Representamos gráficamente las correlaciones canónicas obtenidas para evaluar cuántas dimensiones resultan relevantes. A partir del gráfico, confirmamos que las tres primeras dimensiones presentan valores elevados de correlación, siendo especialmente significativa la primera, con un valor superior a 0.93. Posteriormente, generamos los gráficos de variables e individuos asociados a las dos primeras dimensiones para facilitar su interpretación.
+
+La primera dimensión contrapone a los vehículos de bajo consumo frente a los más caros y de mayor radio de giro (menos maniobrables). Estos últimos presentan una correlación positiva con todas las características físicas del vehículo, como tamaño, peso o potencia.
+
+La segunda dimensión se relaciona positivamente con el precio y la potencia, y negativamente con el radio de giro y la anchura. Por tanto, esta dimensión parece recoger el perfil de vehículos caros, potentes, maniobrables y compactos, características habituales en los modelos deportivos.
+
+La tercera dimensión recoge, principalmente, una fuerte correlación negativa con el consumo en carretera y una débil positiva con el peso, lo cual identifica a vehículos pensados para trayectos largos y con alta eficiencia.
+
+En conclusión, el análisis de correlación canónica revela que existe una fuerte relación entre las características físicas de los vehículos y sus variables de precio, consumo y maniobrabilidad. Las tres primeras dimensiones extraídas permiten caracterizar diferentes perfiles de vehículo: utilitarios económicos, modelos grandes y potentes, y deportivos eficientes.
